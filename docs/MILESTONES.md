@@ -96,6 +96,7 @@
 | **M6 文档+证据** | 53–58′ | E1, E2, E3, E4, E6 + README | `ai/` 三件套齐全；completeness 列出全部工具；README 含已知缺陷 |
 | **M7 收尾** | 58–60′ | E5 触发 + final commit | 记下 commit SHA，`ai/` 已随 commit 同步 |
 | *场外* | *+20–25′* | `written-answers.md`（**无 AI**） | 你自己写 |
+| **M8 提交校验** | 场外 | B6 | `npm run check:submission` 0 阻塞项，记录 final commit SHA |
 
 **超时砍法**：U5 → U4 审计展示 → U2 错误态。**A1_1–A7_2 一条都不砍。**
 

@@ -56,6 +56,7 @@
 | M5 回归 | 45–53′ | B6 全量 |
 | M6 文档+证据 | 53–58′ | E1–E4, E6 + README |
 | M7 收尾 | 58–60′ | E5 + final commit |
+| M8 提交校验 | 场外 | B6：`npm run check:submission` 机械核对 §8 清单 |
 
 - **一次只推进一个里程碑**；上一个里程碑的判据跑过才允许进下一个。
 - 超时砍法：U5 → U4 审计展示 → U2 错误态。**A1_1–A7_2 一条都不砍。**
@@ -107,6 +108,7 @@
 - **技术栈**：Node 24 + Express + `node:sqlite` + React 18 + Vite
 - **M0–M5 完成**：B1–B6、A1_1–A7_2 全部实现，`npm run verify` **44 passed / 0 failed**
 - **M6 完成**：`ai/` 四件套由 pre-commit hook 自动生成并 `git add`（E5 已验证：3 次提交各自动同步一次）
-- **待候选人完成**：`written-answers.md`（考核 §6，**禁止 AI 参与**）
+- **M8 完成**：`npm run check:submission` 把 §8 清单变成可执行校验（仅校验元数据，不读 written-answers 内容）
+- **待候选人完成**：① 提交 `written-answers.md`（§6，**禁止 AI 参与**）② 配置 remote 并推送
 
 > 更新本文件"当前状态"是 Lead 的职责；其他 agent 只读。

@@ -16,7 +16,8 @@
     "dev:api": "node server/index.mjs",
     "setup:hooks": "node scripts/setup-hooks.mjs",
     "postinstall": "node scripts/setup-hooks.mjs",
-    "evidence": "node scripts/ai-evidence.mjs"
+    "evidence": "node scripts/ai-evidence.mjs",
+    "check:submission": "node scripts/check-submission.mjs"
   },
   "dependencies": {
     "express": "^4.21.2",
