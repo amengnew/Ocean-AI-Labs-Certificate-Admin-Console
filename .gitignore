@@ -1,0 +1,10 @@
+node_modules/
+data/*.db
+data/*.db-wal
+data/*.db-shm
+web/dist/
+.DS_Store
+*.log
+
+# not a deliverable (derived from the assessment PDF)
+Ocean_AI_*中文翻译.md

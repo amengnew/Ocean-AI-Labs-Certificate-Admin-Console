@@ -1,0 +1,30 @@
+{
+  "name": "cert-admin-console",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "scripts": {
+    "start": "node scripts/start.mjs",
+    "verify": "node scripts/verify.mjs",
+    "seed": "node server/seed.mjs",
+    "seed:100k": "node scripts/gen-100k.mjs",
+    "build:web": "vite build --config web/vite.config.js",
+    "dev:web": "vite --config web/vite.config.js",
+    "dev:api": "node server/index.mjs",
+    "setup:hooks": "node scripts/setup-hooks.mjs",
+    "postinstall": "node scripts/setup-hooks.mjs",
+    "evidence": "node scripts/ai-evidence.mjs"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^5.4.11"
+  }
+}

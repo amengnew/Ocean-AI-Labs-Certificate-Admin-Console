@@ -1,0 +1,43 @@
+# AI Decision Log
+
+> 本文件由 `scripts/ai-evidence.mjs` 从 `ai/decisions.jsonl` 自动渲染，请勿手工编辑。
+
+共 4 条：采纳的 AI 建议 1 / 驳回或纠正的 AI 输出 2 / 范围 / 设计权衡 1
+
+## 采纳的 AI 建议
+
+### D1 — 用 Intl + sv-SE 直接产出租户本地时间
+
+- **决策**：采用 AI 建议：不引入 dayjs/luxon，直接用 Intl.DateTimeFormat('sv-SE',{timeZone}) 输出 'YYYY-MM-DD HH:mm'，并在写入时把本地日历日落到 issued_local_date 列。
+- **背景**：A5 要求 East 显示 2026-01-11 00:30、West 显示 2026-01-10 21:30（同一 UTC 时间戳），且排序与 CSV 用租户本地日历日。
+- **Session**：`session-fbf0c869-7f7c-407a-ad3c-ec0ce7d681c3`
+- **验证证据**：npm run verify → A5_1 两条断言逐字匹配；A5_2 本地日历日排序单调；A5_3 两个租户 CSV 日期不同。零额外依赖。
+- **Commit**：`seed`
+
+## 驳回或纠正的 AI 输出
+
+### D2 — 纠正 AI 初版：整块 zstd 解压失败，改为逐帧切片
+
+- **决策**：驳回最初用 zlib.zstdDecompressSync() 一次性解压 DSH 会话文件的做法，改为按 zstd magic 逐帧切片解压。
+- **背景**：DSH 会话是每次 append 一帧的多帧 zstd。整块解压只能拿到第一帧（221 字节）；流式解压到第二帧直接抛 ZSTD_error_prefix_unknown，导致导出证据为空 —— 而证据缺失按考核 §8 属于『提交不可评审』。
+- **Session**：`session-fbf0c869-7f7c-407a-ad3c-ec0ce7d681c3`
+- **验证证据**：改后导出 43 帧 / 0 失败 / 320KB；最终 ai-evidence.mjs 对全部会话导出 0 failures，records 与 prompts 计数正常。
+- **Commit**：`seed`
+
+### D3 — 验证发现 AI 写的作用域 bug（response is not defined）
+
+- **决策**：保留 verify.mjs 作为强制门禁；bulk-issue 首次实现把 response 声明在事务回调内部却在外层 return，导致运行时 ReferenceError，已改为在事务外声明并在回调内赋值。
+- **背景**：第一次 npm run verify 时 A2_1 与 A3_1 失败并返回 500。若不写端到端断言，这个 bug 会一路带到交付。
+- **Session**：`session-fbf0c869-7f7c-407a-ad3c-ec0ce7d681c3`
+- **验证证据**：修复前 verify 34 项中 6 项失败（A2_1×2、A2_2、A3_1、crash）；修复后 34 passed / 0 failed。
+- **Commit**：`seed`
+
+## 范围 / 设计权衡
+
+### D4 — 用全唯一索引换 A2/A4 的结构性正确，放弃『吊销后重发』
+
+- **决策**：对 (tenant_id, course_id, learner_id) 建全唯一索引，而不是只对 ACTIVE 状态建部分唯一索引。代价是无法在同一课程下给已吊销证书的学员重新签发。
+- **背景**：1 小时预算内，把『每学员每课至多一证』交给数据库保证，比在代码里判断更可靠；验收场景 A2/A4 都只要求至多一张、不要求重发。
+- **Session**：`session-fbf0c869-7f7c-407a-ad3c-ec0ce7d681c3`
+- **验证证据**：A2_3 断言无重复；A4_3 已持证学员返回 skipped(already_certified)。已作为已知限制写入 README。
+- **Commit**：`seed`

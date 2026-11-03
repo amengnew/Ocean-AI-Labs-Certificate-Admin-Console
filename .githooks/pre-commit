@@ -1,0 +1,4 @@
+#!/bin/sh
+# 每次 commit 自动刷新 AI 证据并 git add（对应 E5）。失败则中断提交。
+set -e
+node scripts/ai-evidence.mjs --stage
