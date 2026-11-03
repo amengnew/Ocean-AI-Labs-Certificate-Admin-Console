@@ -105,7 +105,7 @@
 ## 8. 当前状态
 
 - **技术栈**：Node 24 + Express + `node:sqlite` + React 18 + Vite
-- **M0–M5 完成**：B1–B6、A1_1–A7_2 全部实现，`npm run verify` **34 passed / 0 failed**
+- **M0–M5 完成**：B1–B6、A1_1–A7_2 全部实现，`npm run verify` **44 passed / 0 failed**
 - **M6 完成**：`ai/` 四件套由 pre-commit hook 自动生成并 `git add`（E5 已验证：3 次提交各自动同步一次）
 - **待候选人完成**：`written-answers.md`（考核 §6，**禁止 AI 参与**）
 

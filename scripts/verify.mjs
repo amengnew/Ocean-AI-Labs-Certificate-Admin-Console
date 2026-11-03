@@ -8,6 +8,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { openDb } from '../server/db.mjs';
 import { seedDatabase } from '../server/seed.mjs';
@@ -118,6 +119,27 @@ async function main() {
     check('A5_3', 'CSV uses East local calendar date', eastExport.text.includes('2026-01-11'));
     check('A5_3', 'CSV uses West local calendar date for same UTC instant', bobExport.text.includes('2026-01-10') && !bobExport.text.includes('2026-01-11'));
 
+    // ---------------------------------------------------------- U2 列表能力
+    console.log('\nU2 列表：搜索 / 分页');
+    const byLearner = await req(ALICE, '/api/certificates?search=Priya');
+    check('U2', 'search by learner name', byLearner.ok && byLearner.body.items.length === 1 && byLearner.body.items[0].learner.name === 'Priya Nair', `rows=${byLearner.body.items?.length}`);
+    const bySerial = await req(ALICE, '/api/certificates?search=CERT-EAST-000001');
+    check('U2', 'search by serial number', bySerial.ok && bySerial.body.items.length === 1 && bySerial.body.items[0].serialNumber === 'CERT-EAST-000001');
+    const byWildcard = await req(ALICE, '/api/certificates?search=%25');
+    check('U2', 'LIKE wildcards are treated literally (% matches nothing)', byWildcard.ok && byWildcard.body.items.length === 0, `rows=${byWildcard.body.items?.length}`);
+
+    // ---------------------------------------------------------- B2 边界
+    console.log('\nB2 请求边界');
+    check('B2', 'export without actor → 401', (await req(null, '/api/certificates/export')).status === 401);
+    const badJson = await fetch(`${BASE}/api/certificates/bulk-issue`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Actor-Email': ALICE, 'Idempotency-Key': 'k-badjson' },
+      body: '{not json',
+    });
+    const badBody = await badJson.json().catch(() => null);
+    check('B2', 'malformed JSON → 400 JSON envelope', badJson.status === 400 && badBody?.error?.code === 'invalid_json', `got ${badJson.status}`);
+    check('B2', 'unknown endpoint → 404 JSON', (await req(ALICE, '/api/nope')).status === 404);
+
     // ---------------------------------------------------------- A2 幂等
     console.log('\nA2 重试安全');
     const c0 = countCertsEast();
@@ -138,6 +160,20 @@ async function main() {
     const bodies = new Set(concurrent.map((r) => JSON.stringify(r.body)));
     check('A2_2', '5 concurrent identical requests → one logical operation', concurrent.every((r) => r.ok) && bodies.size === 1, `unique bodies=${bodies.size}`);
     check('A2_2', 'concurrent replay issues exactly one certificate', c2c === c2b + 1, `+${c2c - c2b}`);
+
+    // 模拟崩溃遗留：claim 已提交但从未完成，且已超过接管阈值
+    const staleKey = 'k-stale';
+    const staleFp = createHash('sha256').update(JSON.stringify({ courseId: 'course-east-privacy' })).digest('hex');
+    const wdb0 = new DatabaseSync(DB_PATH);
+    wdb0.prepare(`INSERT INTO idempotency_operations
+      (tenant_id, idem_key, fingerprint, course_id, status, claim_id, created_at)
+      VALUES (?,?,?,?,'IN_PROGRESS','crashed-claim',?)`)
+      .run('tenant-east', staleKey, staleFp, 'course-east-privacy', new Date(Date.now() - 5 * 60_000).toISOString());
+    wdb0.close();
+    const recovered = await bulk(staleKey, 'course-east-privacy');
+    const recoveredRow = dbGet('SELECT status, claim_id FROM idempotency_operations WHERE tenant_id = ? AND idem_key = ?', 'tenant-east', staleKey);
+    check('A2_2', 'stale IN_PROGRESS claim (crash) is taken over and completed', recovered.ok && recoveredRow.status === 'COMPLETED' && recoveredRow.claim_id !== 'crashed-claim', `status=${recoveredRow.status}`);
+
     const dups = dbGet('SELECT COUNT(*) AS n FROM (SELECT tenant_id, course_id, learner_id, COUNT(*) c FROM certificates GROUP BY 1,2,3 HAVING c > 1)').n;
     check('A2_3', 'no learner holds more than one certificate per course', dups === 0);
     const multiAudit = dbGet("SELECT COUNT(*) AS n FROM (SELECT certificate_id, COUNT(*) c FROM audit_events WHERE action='ISSUED' GROUP BY certificate_id HAVING c <> 1)").n;
@@ -170,6 +206,15 @@ async function main() {
     const rev2 = await req(ALICE, `/api/certificates/${issuedId}/revoke`, { method: 'POST', body: '{}' });
     check('A7_2', 'repeat revoke creates no duplicate audit', rev2.ok && rev2.body.alreadyRevoked === true && revCount() === 1, `audits=${revCount()}`);
 
+    // 此时 East 已有 3 张证书，分页断言才有意义
+    const page1 = await req(ALICE, '/api/certificates?pageSize=1&page=1&sort=serial_no&order=asc');
+    const page2 = await req(ALICE, '/api/certificates?pageSize=1&page=2&sort=serial_no&order=asc');
+    check('U2', 'pagination returns distinct rows', page1.ok && page2.ok && page1.body.items[0].id !== page2.body.items[0].id);
+    const overflow = await req(ALICE, '/api/certificates?page=9999&pageSize=20');
+    check('U2', 'out-of-range page returns empty items with stable total', overflow.ok && overflow.body.items.length === 0 && overflow.body.meta.total === page1.body.meta.total);
+    const clamp = await req(ALICE, '/api/certificates?pageSize=1000');
+    check('U2', 'pageSize is clamped to 100', clamp.ok && clamp.body.meta.pageSize === 100);
+
     // ---------------------------------------------------------- A6 导出租户规模
     console.log('\nA6 导出规模（100,000 行）');
     const wdb = new DatabaseSync(DB_PATH);
@@ -194,7 +239,9 @@ async function main() {
     check('A6_3', 'certificate list succeeds while export is running', during.status === 200 && done.ok, `list=${during.status} export=${done.status}`);
   } finally {
     child.kill('SIGTERM');
-    await sleep(150);
+    await sleep(200);
+    // 清理临时库，避免在仓库里留下大文件（A6 会写入 10 万行）
+    for (const suffix of ['', '-wal', '-shm']) { try { fs.rmSync(DB_PATH + suffix); } catch { /* ignore */ } }
   }
 
   console.log(`\n${'─'.repeat(58)}`);

@@ -145,6 +145,9 @@ order (`ORDER BY <sort>, id ASC`), so (a) it finishes well under the 60 s budget
 exports are byte-identical even for equal sort keys, and (c) the certificate list keeps answering
 while an export is in flight.
 
+Measured on the development machine: **100,000 rows in ~0.3 s**, repeated exports byte-identical,
+and the list answering in ~55 ms while the export streams.
+
 ---
 
 ## Verification
@@ -154,7 +157,7 @@ npm run verify
 ```
 
 Boots the real server against `data/.verify.db` and asserts A1_1–A7_2 over real HTTP, plus B1/B2.
-Current result: **34 passed, 0 failed**.
+Current result: **44 passed, 0 failed**.
 
 ---
 
@@ -165,11 +168,17 @@ Current result: **34 passed, 0 failed**.
   per certificate; `PRIMARY KEY (tenant_id, idem_key)` serialises idempotent operations.
 - **Idempotency**: the operation row is claimed and committed *before* work starts, so a concurrent
   duplicate sees `IN_PROGRESS` and waits for the stored response instead of erroring; the payload
-  fingerprint is compared first, so key reuse with a different payload is a `409`.
+  fingerprint is compared first, so key reuse with a different payload is a `409`. Each claim carries a
+  `claim_id`, and a claim older than 60 s is taken over — so a crash between claim and completion cannot
+  strand a key forever, and a stale owner can never overwrite the new owner's result.
+- **Per-learner savepoints** during bulk issue: one learner's failure rolls back only that learner, so a
+  partial failure can never leave a certificate without its audit event.
 - **Tenant-local time** is materialised into `issued_local_date` / `issued_local_display` at write time,
   which makes A5 correct and keeps A6's sorting index-friendly.
 - **Actor context** is derived from a header; every query is tenant-scoped, and cross-tenant access is
   always `404` rather than `403` so existence is not leaked.
+- **Search input is escaped** (`ESCAPE '\'`) so `%` and `_` are matched literally instead of acting as
+  wildcards.
 
 ---
 
@@ -178,15 +187,17 @@ Current result: **34 passed, 0 failed**.
 1. **No re-issue after revocation.** The unique index is on `(tenant, course, learner)` regardless of
    status, so a revoked certificate blocks a fresh one for the same learner+course. Deliberate trade-off
    (see `ai/decision-log.md` D4); the fix would be a partial unique index on `ACTIVE` plus re-issue logic.
-2. **Stuck `IN_PROGRESS` rows.** If the process dies between claim and completion, that idempotency key
-   stays `IN_PROGRESS` and later retries wait 30 s, then get `409 operation_in_progress`. No expiry/takeover.
+2. **Stale-claim takeover is time-based, not lease-based.** A claim older than 60 s is treated as crashed.
+   If a genuine operation ever ran longer than that, a second caller could take over; the unique indexes
+   keep that safe from duplicate certificates, but the reported per-learner outcome could differ.
 3. **CSV issue date is a calendar date** (`YYYY-MM-DD`) only. The API and UI show the full
    `YYYY-MM-DD HH:mm`; the CSV follows the spec's "tenant-local calendar date" wording.
 4. **Offset pagination** (`page`/`pageSize`, max 100). No cursor pagination; deep pages scan.
 5. **Single process.** No clustering, no rate limiting, no auth beyond the actor header (out of scope).
 6. **Perf dataset has no audit events.** Generated rows exist to exercise export scale, not the issuance path.
-7. **`npm run verify` writes ~100k rows** into `data/.verify.db`, so it takes a few seconds and leaves that
-   file behind (git-ignored).
+7. **`npm run verify` writes ~100k rows** into `data/.verify.db`; it takes a few seconds and removes the file
+   again on exit.
+
 
 ## AI interaction evidence
 
