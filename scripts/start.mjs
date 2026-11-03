@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * start.mjs — B1 一条命令启动：
- *   ① 装依赖（如缺） ② 构建前端（如缺 dist） ③ 初始化 demo 数据（如缺库） ④ 起服务
+ *   ① 装依赖（如缺） ② 构建前端（如缺 dist） ③ 初始化 demo 数据（幂等） ④ 起服务
  */
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -24,7 +24,9 @@ function run(cmd, args, label) {
 if (!fs.existsSync('node_modules')) run('npm', ['install', '--no-audit', '--no-fund'], '① 安装依赖');
 run('node', ['scripts/setup-hooks.mjs'], '① 安装 git hooks（证据自动同步）');
 if (!fs.existsSync(DIST)) run('npm', ['run', 'build:web'], '② 构建前端');
-if (!fs.existsSync(DB_PATH)) run('node', ['server/seed.mjs'], '③ 初始化 demo 数据');
+// seedDatabase 本身幂等（已有 tenant 就直接返回），所以每次都跑：
+// 只在库文件不存在时 seed 会漏掉『库在但为空』的情况，导致全站 401。
+run('node', ['server/seed.mjs'], '③ 初始化 demo 数据');
 
 console.log('\n▸ ④ 启动服务\n');
 run(process.execPath, ['server/index.mjs'], '④ 启动服务');
