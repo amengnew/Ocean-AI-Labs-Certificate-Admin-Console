@@ -104,9 +104,9 @@
 
 ## 8. 当前状态
 
-- **技术栈已定**：Node 24 + Express + `node:sqlite` + React 18 + Vite
-- **已完成**：`docs/MILESTONES.md`（准则与编号）、`scripts/export-ai-session.mjs`（E1/E2 验证可用：2 会话 / 137 条 record）
-- **代码状态**：`package.json`、`server/db.mjs`、`server/seed.mjs` 已创建但**未运行、未接入**
-- **待用户确认**：① 上述三文件保留还是删除（空仓开工）② 计时起点
+- **技术栈**：Node 24 + Express + `node:sqlite` + React 18 + Vite
+- **M0–M5 完成**：B1–B6、A1_1–A7_2 全部实现，`npm run verify` **34 passed / 0 failed**
+- **M6 完成**：`ai/` 四件套由 pre-commit hook 自动生成并 `git add`（E5 已验证：3 次提交各自动同步一次）
+- **待候选人完成**：`written-answers.md`（考核 §6，**禁止 AI 参与**）
 
 > 更新本文件"当前状态"是 Lead 的职责；其他 agent 只读。
