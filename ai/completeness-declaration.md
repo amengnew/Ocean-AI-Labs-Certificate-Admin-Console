@@ -6,7 +6,7 @@
 
 | 工具 | 模型 | 导出方式 | 会话数 |
 |---|---|---|---|
-| DeepSeek Harness (DSH) | DeepSeek-Flash-1017 | 原生 JSONL（`ai/sessions/`） | 3 |
+| DeepSeek Harness (DSH) | DeepSeek-Flash-1017 | 原生 JSONL（`ai/sessions/`） | 4 |
 
 ## 导出限制
 
@@ -19,4 +19,4 @@
 - 以上会话覆盖规划、实现、验证、文档全过程的 AI 交互，包含被驳回的 AI 建议与失败运行。
 - 考核 §6 `written-answers.md` 为候选人独立完成，**未使用任何 AI 协助**（无起草、翻译、润色、校对）。
 
-_generated_at: 2026-11-03T16:27:22+08:00_
+_generated_at: 2026-11-03T16:40:35+08:00_

@@ -2,7 +2,7 @@
 
 > 本文件由 `scripts/ai-evidence.mjs` 从 `ai/decisions.jsonl` 自动渲染，请勿手工编辑。
 
-共 4 条：采纳的 AI 建议 1 / 驳回或纠正的 AI 输出 2 / 范围 / 设计权衡 1
+共 5 条：采纳的 AI 建议 1 / 驳回或纠正的 AI 输出 2 / 范围 / 设计权衡 2
 
 ## 采纳的 AI 建议
 
@@ -41,3 +41,11 @@
 - **Session**：`session-fbf0c869-7f7c-407a-ad3c-ec0ce7d681c3`
 - **验证证据**：A2_3 断言无重复；A4_3 已持证学员返回 skipped(already_certified)。已作为已知限制写入 README。
 - **Commit**：`seed`
+
+### D5 — 崩溃遗留 claim 用「时间阈值接管」而非租约
+
+- **决策**：状态为 IN_PROGRESS 且超过 60 秒的 idempotency 占位视为崩溃，允许新请求接管；用 claim_id 保证只有当前持有者能写回结果，不引入租约续期或心跳。
+- **背景**：1 小时预算内，租约心跳会引入后台定时器与额外失败模式。唯一索引已经保证接管不会产生重复证书或重复审计，最坏情况只是 per-learner 结果与首次尝试不同。
+- **Session**：`session-fbf0c869-7f7c-407a-ad3c-ec0ce7d681c3`
+- **验证证据**：npm run verify → A2_2『stale IN_PROGRESS claim (crash) is taken over and completed』通过；总计 44 passed / 0 failed。
+- **Commit**：`hardening`
