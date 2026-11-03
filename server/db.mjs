@@ -90,6 +90,7 @@ CREATE TABLE IF NOT EXISTS idempotency_operations (
   fingerprint   TEXT NOT NULL,
   course_id     TEXT NOT NULL,
   status        TEXT NOT NULL CHECK (status IN ('IN_PROGRESS','COMPLETED')),
+  claim_id      TEXT,
   http_status   INTEGER,
   response_json TEXT,
   created_at    TEXT NOT NULL,
@@ -97,6 +98,12 @@ CREATE TABLE IF NOT EXISTS idempotency_operations (
   PRIMARY KEY (tenant_id, idem_key)
 );
 `;
+
+/** 轻量迁移：CREATE TABLE IF NOT EXISTS 不会给已存在的表补列。 */
+function ensureColumn(db, table, column, decl) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+  if (!cols.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`);
+}
 
 /** 打开（必要时创建）数据库并保证 schema 到位。 */
 export function openDb(dbPath) {
@@ -106,6 +113,7 @@ export function openDb(dbPath) {
   db.exec('PRAGMA foreign_keys = ON;');
   db.exec('PRAGMA busy_timeout = 5000;');
   db.exec(SCHEMA);
+  ensureColumn(db, 'idempotency_operations', 'claim_id', 'TEXT');
   return db;
 }
 

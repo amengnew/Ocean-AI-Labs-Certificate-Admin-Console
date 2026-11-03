@@ -116,6 +116,12 @@ function exportSessions() {
   }
   rows.sort((a, b) => a._startMs - b._startMs);
 
+  if (rows.length === 0) {
+    // 例如在 git worktree 中执行：本目录没有会话记录，直接保留既有证据，不清空
+    console.warn('⚠ 本工作目录未匹配到 AI 会话；保留既有 ai/ 证据不覆盖');
+    return null;
+  }
+
   const cols = ['session_id', 'tool', 'model', 'started_at', 'ended_at', 'export_file', 'purpose', 'related_commits'];
   const esc = (v) => { const x = String(v ?? ''); return /[",\n]/.test(x) ? `"${x.replace(/"/g, '""')}"` : x; };
   const csv = [cols.join(','), ...rows.map((r) => cols.map((c) => esc(r[c])).join(','))].join('\n') + '\n';
@@ -214,6 +220,7 @@ function secretScan(rows) {
 function main() {
   fs.mkdirSync(AI_DIR, { recursive: true });
   const rows = exportSessions();
+  if (rows === null) return;
   for (const r of rows) {
     console.log(`✓ E1 ${r.export_file}  frames=${r._frames} fail=${r._failures} records=${r._records} prompts=${r._prompts} tools=${r._toolCalls} model=${r.model}`);
   }

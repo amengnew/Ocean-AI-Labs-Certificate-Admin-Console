@@ -80,8 +80,10 @@ function buildFilter(tenantId, search) {
   const params = [tenantId];
   const q = String(search ?? '').trim();
   if (q) {
-    where.push('(l.name LIKE ? OR c.serial_no LIKE ?)');
-    params.push(`%${q}%`, `%${q}%`);
+    // 转义 LIKE 通配符：用户输入按字面匹配，避免 '%' / '_' 变成模式
+    const escaped = q.replace(/[\\%_]/g, (m) => `\\${m}`);
+    where.push("(l.name LIKE ? ESCAPE '\\' OR c.serial_no LIKE ? ESCAPE '\\')");
+    params.push(`%${escaped}%`, `%${escaped}%`);
   }
   return { whereSql: where.join(' AND '), params };
 }
@@ -146,21 +148,28 @@ app.get('/api/certificates/export', async (req, res) => {
   res.setHeader('Content-Disposition', `attachment; filename="certificates-${actor.tenant_code.toLowerCase()}.csv"`);
   res.setHeader('X-Row-Fields', 'learner_name,course_title,serial_number,issue_date_local');
 
+  // 客户端中断时停止迭代，避免继续为一个已关闭的连接读完整张表
+  let aborted = false;
+  res.on('close', () => { aborted = true; });
+
   try {
     res.write('learner_name,course_title,serial_number,issue_date_local\n');
     const stmt = ro.prepare(`${CERT_SELECT} WHERE ${whereSql} ${orderSql}`);
     let buf = [];
     let n = 0;
     for (const row of stmt.iterate(...params)) {
+      if (aborted) break;
       buf.push([csvCell(row.learner_name), csvCell(row.course_title), csvCell(row.serial_no), csvCell(row.issued_local_date)].join(','));
       if (++n % 2000 === 0) {
-        if (!res.write(buf.join('\n') + '\n')) await once(res, 'drain');
+        if (!res.write(buf.join('\n') + '\n')) {
+          await Promise.race([once(res, 'drain'), once(res, 'close')]);
+        }
         buf = [];
         // 让出事件循环：导出期间列表请求仍可被处理（A6_3）
         await new Promise((r) => setImmediate(r));
       }
     }
-    if (buf.length) res.write(buf.join('\n') + '\n');
+    if (buf.length && !aborted) res.write(buf.join('\n') + '\n');
     res.end();
   } catch (err) {
     if (!res.headersSent) fail(res, 500, 'internal_error', err.message);
@@ -177,19 +186,34 @@ function nextSerial(tenantId) {
   return `CERT-${t.code}-${String(t.next_serial).padStart(6, '0')}`;
 }
 
-/** 占位（独立事务并立即提交），让并发的重复请求能看见 IN_PROGRESS。 */
+const CLAIM_STALE_MS = 60_000;
+
+/**
+ * 占位：独立语句并立即提交，让并发的重复请求看得见 IN_PROGRESS。
+ * 崩溃遗留的 IN_PROGRESS 超过 CLAIM_STALE_MS 允许被接管；claim_id 保证只有当前持有者能写回结果。
+ */
 function claimOperation(tenantId, key, fingerprint, courseId) {
-  for (let attempt = 0; attempt < 3; attempt++) {
+  const claimId = crypto.randomUUID();
+  for (let attempt = 0; attempt < 3; attempt += 1) {
     const row = db.prepare('SELECT * FROM idempotency_operations WHERE tenant_id = ? AND idem_key = ?').get(tenantId, key);
     if (row) {
       if (row.fingerprint !== fingerprint) return { kind: 'mismatch' };
       if (row.status === 'COMPLETED') return { kind: 'replay', httpStatus: row.http_status ?? 200, response: JSON.parse(row.response_json) };
+      const age = Date.now() - Date.parse(row.created_at);
+      if (age > CLAIM_STALE_MS) {
+        const took = db.prepare(`UPDATE idempotency_operations SET claim_id = ?, created_at = ?
+                                 WHERE tenant_id = ? AND idem_key = ? AND status = 'IN_PROGRESS'`)
+          .run(claimId, nowUtcIso(), tenantId, key).changes;
+        if (took === 1) return { kind: 'owner', claimId };
+      }
       return { kind: 'pending' };
     }
     try {
-      db.prepare(`INSERT INTO idempotency_operations (tenant_id, idem_key, fingerprint, course_id, status, created_at)
-                  VALUES (?,?,?,?,'IN_PROGRESS',?)`).run(tenantId, key, fingerprint, courseId, nowUtcIso());
-      return { kind: 'owner' };
+      db.prepare(`INSERT INTO idempotency_operations
+                  (tenant_id, idem_key, fingerprint, course_id, status, claim_id, created_at)
+                  VALUES (?,?,?,?,'IN_PROGRESS',?,?)`)
+        .run(tenantId, key, fingerprint, courseId, claimId, nowUtcIso());
+      return { kind: 'owner', claimId };
     } catch (err) {
       if (!/UNIQUE|constraint/i.test(String(err.message))) throw err;
     }
@@ -208,7 +232,7 @@ async function waitForOperation(tenantId, key, timeoutMs = 30_000) {
   return null;
 }
 
-function runBulkIssue(actor, course, idemKey) {
+function runBulkIssue(actor, course, idemKey, claimId) {
   const tz = actor.timezone;
   const now = nowUtcIso();
   const localD = localDate(now, tz);
@@ -238,7 +262,8 @@ function runBulkIssue(actor, course, idemKey) {
       (tenant_id, certificate_id, action, actor_email, at_utc, metadata_json)
       VALUES (?,?,'ISSUED',?,?,?)`);
 
-    for (const e of enrollments) {
+    for (let i = 0; i < enrollments.length; i += 1) {
+      const e = enrollments[i];
       if (already.has(e.learner_id)) {
         outcomes.push({ learnerId: e.learner_id, learnerName: e.learner_name, status: 'skipped', reason: 'already_certified' });
         skipped += 1;
@@ -249,14 +274,20 @@ function runBulkIssue(actor, course, idemKey) {
         skipped += 1;
         continue;
       }
+      // 每个学员一个 savepoint：单个学员失败只回滚这一条，不会留下"有证书无审计"的半成品
+      const sp = `sp_${i}`;
+      db.exec(`SAVEPOINT ${sp}`);
       try {
         const certId = `cert-${crypto.randomUUID()}`;
         const serial = nextSerial(actor.tenant_id);
         insCert.run(certId, actor.tenant_id, course.id, e.learner_id, e.id, serial, now, localD, localDisp);
         insAudit.run(actor.tenant_id, certId, actor.email, now, JSON.stringify({ source: 'bulk-issue', idempotencyKey: idemKey }));
+        db.exec(`RELEASE ${sp}`);
         outcomes.push({ learnerId: e.learner_id, learnerName: e.learner_name, status: 'issued', serialNumber: serial, certificateId: certId });
         issued += 1;
       } catch (err) {
+        db.exec(`ROLLBACK TO ${sp}`);
+        db.exec(`RELEASE ${sp}`);
         outcomes.push({ learnerId: e.learner_id, learnerName: e.learner_name, status: 'failed', reason: 'issue_failed' });
         failed += 1;
       }
@@ -271,10 +302,11 @@ function runBulkIssue(actor, course, idemKey) {
       outcomes,
     };
     response = built;
+    // 只由当前占位持有者写回结果：若已被接管（claim_id 变化），不覆盖新持有者的结果
     db.prepare(`UPDATE idempotency_operations
                 SET status='COMPLETED', http_status=200, response_json=?, completed_at=?
-                WHERE tenant_id=? AND idem_key=?`)
-      .run(JSON.stringify(built), now, actor.tenant_id, idemKey);
+                WHERE tenant_id=? AND idem_key=? AND claim_id=?`)
+      .run(JSON.stringify(built), now, actor.tenant_id, idemKey, claimId);
   });
 
   return response;
@@ -311,7 +343,7 @@ app.post('/api/certificates/bulk-issue', async (req, res) => {
 
     let response;
     try {
-      response = runBulkIssue(actor, course, idemKey);
+      response = runBulkIssue(actor, course, idemKey, claim.claimId);
     } catch (err) {
       db.prepare('DELETE FROM idempotency_operations WHERE tenant_id = ? AND idem_key = ?').run(actor.tenant_id, idemKey);
       throw err;
@@ -378,6 +410,14 @@ if (fs.existsSync(DIST)) {
 }
 
 app.use('/api', (_req, res) => fail(res, 404, 'not_found', 'Endpoint not found'));
+
+// 统一错误信封：畸形 JSON / body 解析失败也返回 JSON，而不是 Express 默认的 HTML 堆栈
+app.use((err, _req, res, _next) => {
+  if (res.headersSent) return;
+  if (err?.type === 'entity.parse.failed') return fail(res, 400, 'invalid_json', 'Request body is not valid JSON');
+  if (err?.type === 'entity.too.large') return fail(res, 413, 'payload_too_large', 'Request body is too large');
+  return fail(res, 400, 'bad_request', err?.message ?? 'Bad request');
+});
 
 app.listen(PORT, () => {
   const seeded = db.prepare('SELECT COUNT(*) AS n FROM certificates').get().n;
