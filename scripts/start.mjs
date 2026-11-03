@@ -21,7 +21,13 @@ function run(cmd, args, label) {
   if (r.status !== 0) { console.error(`✗ ${label} failed (exit ${r.status})`); process.exit(r.status ?? 1); }
 }
 
-if (!fs.existsSync('node_modules')) run('npm', ['install', '--no-audit', '--no-fund'], '① 安装依赖');
+if (!fs.existsSync('node_modules')) {
+  // 有 lockfile 时用 npm ci：可复现，且不会像 npm install 那样因 postinstall 补 hasInstallScript 而弄脏工作树
+  const args = fs.existsSync('package-lock.json')
+    ? ['ci', '--no-audit', '--no-fund']
+    : ['install', '--no-audit', '--no-fund'];
+  run('npm', args, '① 安装依赖');
+}
 run('node', ['scripts/setup-hooks.mjs'], '① 安装 git hooks（证据自动同步）');
 if (!fs.existsSync(DIST)) run('npm', ['run', 'build:web'], '② 构建前端');
 // seedDatabase 本身幂等（已有 tenant 就直接返回），所以每次都跑：
